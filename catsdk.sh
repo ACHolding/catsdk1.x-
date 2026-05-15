@@ -147,18 +147,27 @@ fi
 echo ""
 echo "Console status:"
 echo "   Nintendo (gb/gba/nds/3ds/GC/Wii/WiiU/Switch) → devkitPro packages above when available"
-echo "   Atari / PS / DC / Jaguar / Saturn retail SDK → not public; stubs + cc65 stub-hint only"
+echo "   Atari → Dreamcast (stubs) → PlayStation PS1–PS5 (stubs) → use partner / community SDKs as applicable"
 
 WRAP="/usr/local/catsdk-wrappers"
 sudo mkdir -p "$WRAP"
 
+# ---------------------------------------------------------------------------
+# Retro / Nintendo / Sega-class stubs (see devkitPro + cc65 above for real bits)
+# ---------------------------------------------------------------------------
 WRAP_CONSOLES=(
 	atari2600 atari7800 lynx jaguar nes snes genesis gb gbc
 	gba nds 3ds n64 gc wii wiiu switch dreamcast
-	ps1 ps2 ps3 ps4 ps5
 )
 
-for console in "${WRAP_CONSOLES[@]}"; do
+# ---------------------------------------------------------------------------
+# PlayStation PS1–PS5: Sony does not ship public macOS *-gcc binaries here.
+# These install /usr/local/bin/ps1-gcc … ps5-gcc as informational stubs (exit 1).
+# Real retail builds need SIE / registered partner SDKs & licenses.
+# ---------------------------------------------------------------------------
+PS_STUBS=(ps1 ps2 ps3 ps4 ps5)
+
+for console in "${WRAP_CONSOLES[@]}" "${PS_STUBS[@]}"; do
 	LAB="$(ps_label "$console")"
 	TARGET="Community or partner SDK — not bundled by this stub"
 	case "$console" in
@@ -172,8 +181,11 @@ for console in "${WRAP_CONSOLES[@]}"; do
 		TARGET="Use devkitPro / dkp-pacman toolchain above — this wrapper is informational only"
 		;;
 	n64) TARGET="N64 toolchain is separate / partner mips tools — stub only" ;;
-	ps1) TARGET="Retail PS1 toolchain is partner-only / NDA" ;;
-	ps2|ps3|ps4|ps5) TARGET="SIE partner SDK only (not Catsdk-provided)" ;;
+	ps1) TARGET="PS1: retail toolchain is partner-only / NDA (MIPS R3000 class)" ;;
+	ps2) TARGET="PS2: EE — SIE partner SDK only" ;;
+	ps3) TARGET="PS3: Cell — SIE partner SDK only" ;;
+	ps4) TARGET="PS4: x86_64 — SIE partner SDK only" ;;
+	ps5) TARGET="PS5: partner SDK only (not Catsdk-provided)" ;;
 	esac
 	sudo tee "$WRAP/${console}-gcc" > /dev/null << WRAP_EOF
 #!/bin/bash
@@ -229,7 +241,8 @@ echo "========================================"
 echo ""
 echo "Try:"
 echo "  catsdk-gba main.c pong   (needs devkitARM on PATH after toolchain install)"
-echo "  nes-gcc / atari2600-gcc / ps5-gcc — informational stubs (exit 1)"
-echo "  catsdk-cc65-help — cc65 pointer for Atari/NES-era 6502"
+echo "  ps1-gcc … ps5-gcc       — PlayStation informational stubs only (exit 1)"
+echo "  nes-gcc / atari2600-gcc — other stubs (exit 1)"
+echo "  catsdk-cc65-help       — cc65 pointer for Atari/NES-era 6502"
 echo ""
 echo "Meow."
