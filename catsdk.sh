@@ -5,7 +5,24 @@
 # ================================================
 set -euo pipefail
 
-DKP_PACMAN="${DKP_PACMAN:-/opt/devkitpro/pacman/bin/dkp-pacman}"
+# Newer macOS devkitPro PKG installs dkp-pacman in /usr/local/bin (Linux often uses .../pacman/bin).
+resolve_dkp_pacman() {
+	local cand
+
+	export PATH="/usr/local/bin:/opt/devkitpro/tools/bin:/opt/devkitpro/pacman/bin:${PATH:-}"
+	for cand in "${DKP_PACMAN:-}" "$(command -v dkp-pacman 2>/dev/null || true)" \
+		/usr/local/bin/dkp-pacman \
+		/opt/devkitpro/pacman/bin/dkp-pacman \
+		/opt/devkitpro/tools/bin/dkp-pacman; do
+		if [[ -n "$cand" && -x "$cand" ]]; then
+			echo "$cand"
+			return 0
+		fi
+	done
+	return 1
+}
+
+DKP_PACMAN="${DKP_PACMAN:-}"
 
 ps_label() {
 	case "$1" in
@@ -84,19 +101,26 @@ rm -f "$DL"
 
 xcode-select --install 2>/dev/null || true
 
-if [[ ! -x "$DKP_PACMAN" ]]; then
-	echo "ERROR: Expected dkp-pacman at $DKP_PACMAN after install."
+DKP_PACMAN="$(resolve_dkp_pacman || true)"
+if [[ -z "${DKP_PACMAN}" ]] || [[ ! -x "${DKP_PACMAN}" ]]; then
+	echo ""
+	echo "ERROR: dkp-pacman not found after PKG install."
+	echo "Try: open a NEW Terminal tab (updates PATH), or run:"
+	echo "     ls -la /usr/local/bin/dkp-pacman"
+	echo "     export DKP_PACMAN=/full/path/to/dkp-pacman && sudo ./catsdk.sh"
+	echo "Some macOS setups need reboot once after pkg (see devkitpro.org wiki)."
 	exit 1
 fi
+echo "- Using pacman binary: ${DKP_PACMAN}"
 
 echo ""
 echo "- Syncing pacman + Nintendo toolchains (real SDKs)..."
 
-sudo "$DKP_PACMAN" -Sy --noconfirm || true
+sudo "${DKP_PACMAN}" -Sy --noconfirm || true
 
 # Install groups individually so one unknown name does not stop the rest
 _install() {
-	sudo "$DKP_PACMAN" -S --noconfirm "$1" 2>/dev/null \
+	sudo "${DKP_PACMAN}" -S --noconfirm "$1" 2>/dev/null \
 		|| echo "    (skipped: $1)"
 }
 
@@ -113,31 +137,67 @@ _install wiiu-dev
 _install switch-dev
 
 echo ""
+echo "- Optional: Homebrew cc65 (6502: Atari 8‑bit / NES homebrew style) ..."
+if command -v brew >/dev/null 2>&1; then
+	HOMEBREW_NO_AUTO_UPDATE=1 brew install cc65 || echo "    (cc65 skipped)"
+else
+	echo "    (no Homebrew — skip cc65; install brew if you want 6502 toolchain)"
+fi
+
+echo ""
 echo "Console status:"
-echo "   Nintendo handhelds/console (above) → devkitPro when packages exist"
-echo "   PS / retail Sega / Atari retail SDK → not redistributable; stubs only"
+echo "   Nintendo (gb/gba/nds/3ds/GC/Wii/WiiU/Switch) → devkitPro packages above when available"
+echo "   Atari / PS / DC / Jaguar / Saturn retail SDK → not public; stubs + cc65 stub-hint only"
 
 WRAP="/usr/local/catsdk-wrappers"
 sudo mkdir -p "$WRAP"
 
-for console in ps1 ps2 ps3 ps4 ps5; do
+WRAP_CONSOLES=(
+	atari2600 atari7800 lynx jaguar nes snes genesis gb gbc
+	gba nds 3ds n64 gc wii wiiu switch dreamcast
+	ps1 ps2 ps3 ps4 ps5
+)
+
+for console in "${WRAP_CONSOLES[@]}"; do
 	LAB="$(ps_label "$console")"
-	TARGET="Modern SIE"
-	if [[ "$console" == "ps1" ]]; then
-		TARGET="MIPS R3000-era (retail toolchain NDA-only)"
-	fi
+	TARGET="Community or partner SDK — not bundled by this stub"
+	case "$console" in
+	atari2600|atari7800|lynx|nes)
+		TARGET="6502-era homebrew: use cc65 (brew install cc65) — see catsdk-cc65-help"
+		;;
+	jaguar|snes|genesis|dreamcast)
+		TARGET="No standard public retail macOS *-gcc wired here"
+		;;
+	gb|gbc|gba|nds|3ds|gc|wii|wiiu|switch)
+		TARGET="Use devkitPro / dkp-pacman toolchain above — this wrapper is informational only"
+		;;
+	n64) TARGET="N64 toolchain is separate / partner mips tools — stub only" ;;
+	ps1) TARGET="Retail PS1 toolchain is partner-only / NDA" ;;
+	ps2|ps3|ps4|ps5) TARGET="SIE partner SDK only (not Catsdk-provided)" ;;
+	esac
 	sudo tee "$WRAP/${console}-gcc" > /dev/null << WRAP_EOF
 #!/bin/bash
 echo "Catsdk: ${LAB} stub (no public ${LAB} compiler on macOS)"
 echo "  Target note: ${TARGET}"
 echo "  Args:" "\$@"
-echo "  This does not build a real ${LAB} binary — use official partner SDKs only."
+echo "  This line is a Catsdk informational stub — not a real standalone compiler."
 exit 1
 WRAP_EOF
 	sudo chmod +x "$WRAP/${console}-gcc"
 	sudo ln -sf "$WRAP/${console}-gcc" "/usr/local/bin/${console}-gcc" \
 		|| sudo cp -f "$WRAP/${console}-gcc" "/usr/local/bin/${console}-gcc"
 done
+
+sudo ln -sf "$WRAP/dreamcast-gcc" "/usr/local/bin/dc-gcc" 2>/dev/null \
+	|| sudo cp -f "$WRAP/dreamcast-gcc" "/usr/local/bin/dc-gcc" 2>/dev/null || true
+
+sudo tee "/usr/local/bin/catsdk-cc65-help" >/dev/null << 'CC_EOF'
+#!/bin/bash
+echo "Catsdk: For Atari/NES-style 6502 homebrew install cc65 (brew install cc65) or use:"
+echo "  ca65/cl65 from cc65 docs — not bundled as *-gcc here."
+exit 1
+CC_EOF
+sudo chmod +x "/usr/local/bin/catsdk-cc65-help"
 
 sudo tee "/usr/local/bin/catsdk-gba" > /dev/null << 'GBA_EOF'
 #!/bin/bash
@@ -168,7 +228,8 @@ echo "Catsdk installer finished."
 echo "========================================"
 echo ""
 echo "Try:"
-echo "  catsdk-gba main.c pong     (needs DEVKITARM on PATH)"
-echo "  ps1-gcc …                 (shows stub / exits 1)"
+echo "  catsdk-gba main.c pong   (needs devkitARM on PATH after toolchain install)"
+echo "  nes-gcc / atari2600-gcc / ps5-gcc — informational stubs (exit 1)"
+echo "  catsdk-cc65-help — cc65 pointer for Atari/NES-era 6502"
 echo ""
 echo "Meow."
